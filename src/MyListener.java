@@ -1,5 +1,7 @@
 
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Stack;
 
 import org.antlr.runtime.ANTLRStringStream;
 import org.antlr.v4.runtime.ANTLRFileStream;
@@ -10,29 +12,78 @@ import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.TokenStream;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
 
+import symjava.bytecode.BytecodeFunc;
+import symjava.math.SymMath;
+import symjava.relational.Eq;
+import symjava.relational.Ge;
+import symjava.relational.Gt;
+import symjava.relational.Le;
+import symjava.relational.Lt;
+import symjava.relational.Neq;
+import symjava.symbolic.Expr;
 import symjava.symbolic.Symbol;
+import symjava.symbolic.utils.JIT;
 
 
 public class MyListener extends CBaseListener {
 	CParser parser;
-	HashMap<String, Symbol> symMap = new HashMap<String, Symbol>();
+	Stack<Expr> stack = new Stack<Expr>();
+	HashSet<String> defuns = new HashSet<String>();
+	HashMap<String, Expr> varMap = new HashMap<String, Expr>();
 	
 	public MyListener(CParser parser) {
 		this.parser = parser;
+		defuns.add("sin");
+		defuns.add("cos");
+		
 	}
 	public void exitPrimaryExpression(CParser.PrimaryExpressionContext ctx) {
 		System.out.println("PrimaryExpression="+ctx.getText());
+		String varName = ctx.getText();
+		if(!defuns.contains(varName)) {
+			try {
+				double d = Double.parseDouble(varName);
+				stack.push(Expr.valueOf(d));
+			} catch(Exception e) {
+				Expr expr = varMap.get(varName);
+				if(expr != null)
+					stack.push(expr);
+				else
+					stack.push(new Symbol(varName));
+			}
+		}
 	}
+	
+	public int argc = 0;
 	public void exitArgumentExpressionList(CParser.ArgumentExpressionListContext ctx) {
 		System.out.println("ArgumentExpressionList="+ctx.getText());
+		argc++;
 	}
 	
 	public void exitPostfixExpression(CParser.PostfixExpressionContext ctx) { 
 		if(ctx.getChildCount() > 1) {
-			System.out.println("PostfixExpression="+ctx.getText());
+			System.out.println("PostfixExpression="+ctx.getText()+" argc="+argc);
 			for(int i=0; i<ctx.getChildCount(); i++) {
 				System.out.println("\t"+ctx.getChild(i).getText());
 			}
+			String name = ctx.getChild(0).getText();
+			String type = ctx.getChild(1).getText();
+			if(type.equals("(")) { //function call: sin(
+				if(name.equals("sin")) {
+					stack.push(SymMath.sin(stack.pop()));
+				} else if(name.equals("cos")) {
+					stack.push(SymMath.cos(stack.pop()));
+				}
+			} else if(type.equals("[")) { //array: ary[
+				
+			}
+//				    |   postfixExpression '[' expression ']'
+//				    |   postfixExpression '(' argumentExpressionList? ')'
+//				    |   postfixExpression '.' Identifier
+//				    |   postfixExpression '->' Identifier
+//				    |   postfixExpression '++'
+//				    |   postfixExpression '--'
+			argc = 0;
 		}
 	}
 	
@@ -51,18 +102,38 @@ public class MyListener extends CBaseListener {
 	
 	public void exitMultiplicativeExpression(CParser.MultiplicativeExpressionContext ctx) {
 		if(ctx.getChildCount() == 3) {
-		System.out.println("MultiplicativeExpression="+ctx.getText());
-		System.out.println("\t"+ctx.getChild(0).getText());
-		System.out.println("\t"+ctx.getChild(1).getText());
-		System.out.println("\t"+ctx.getChild(2).getText());
+			System.out.println("MultiplicativeExpression="+ctx.getText());
+			System.out.println("\t"+ctx.getChild(0).getText());
+			System.out.println("\t"+ctx.getChild(1).getText());
+			System.out.println("\t"+ctx.getChild(2).getText());
+			Expr r = stack.pop();
+			Expr l = stack.pop();
+			String op = ctx.getChild(1).getText();
+			if(op.equals("*"))
+				stack.push(l*r);
+			else if(op.equals("/"))
+				stack.push(l/r);
+			else if(op.equals("%"))
+				stack.push(l%r);
+			else
+				throw new RuntimeException();
 		}
 	}
 	public void exitAdditiveExpression(CParser.AdditiveExpressionContext ctx) {
 		if(ctx.getChildCount() == 3) {
-		System.out.println("AdditiveExpression="+ctx.getText());
-		System.out.println("\t"+ctx.getChild(0).getText());
-		System.out.println("\t"+ctx.getChild(1).getText());
-		System.out.println("\t"+ctx.getChild(2).getText());
+			System.out.println("AdditiveExpression="+ctx.getText());
+			System.out.println("\t"+ctx.getChild(0).getText());
+			System.out.println("\t"+ctx.getChild(1).getText());
+			System.out.println("\t"+ctx.getChild(2).getText());
+			Expr r = stack.pop();
+			Expr l = stack.pop();
+			String op = ctx.getChild(1).getText();
+			if(op.equals("+"))
+				stack.push(l+r);
+			else if(op.equals("-"))
+				stack.push(l-r);
+			else
+				throw new RuntimeException();
 		}
 	}
 	public void exitShiftExpression(CParser.ShiftExpressionContext ctx) {
@@ -75,19 +146,41 @@ public class MyListener extends CBaseListener {
 	}
 	public void exitRelationalExpression(CParser.RelationalExpressionContext ctx) {
 		if(ctx.getChildCount() == 3) {
-		System.out.println("RelationalExpression="+ctx.getText());
-		System.out.println("\t"+ctx.getChild(0).getText());
-		System.out.println("\t"+ctx.getChild(1).getText());
-		System.out.println("\t"+ctx.getChild(2).getText());
+			System.out.println("RelationalExpression="+ctx.getText());
+			System.out.println("\t"+ctx.getChild(0).getText());
+			System.out.println("\t"+ctx.getChild(1).getText());
+			System.out.println("\t"+ctx.getChild(2).getText());
+			Expr r = stack.pop();
+			Expr l = stack.pop();
+			String op = ctx.getChild(1).getText();
+			if(op.equals("<"))
+				stack.push(Lt.apply(l,r));
+			else if(op.equals("<="))
+				stack.push(Le.apply(l,r));
+			else if(op.equals(">"))
+				stack.push(Gt.apply(l,r));
+			else if(op.equals(">="))
+				stack.push(Ge.apply(l,r));
+			else
+				throw new RuntimeException();
 		}
 	}
 	public void exitEqualityExpression(CParser.EqualityExpressionContext ctx) {
 		if(ctx.getChildCount() == 3) {
-		System.out.println("EqualityExpression="+ctx.getText());
-		System.out.println("\t"+ctx.getChild(0).getText());
-		System.out.println("\t"+ctx.getChild(1).getText());
-		System.out.println("\t"+ctx.getChild(2).getText());
-		}
+			System.out.println("EqualityExpression="+ctx.getText());
+			System.out.println("\t"+ctx.getChild(0).getText());
+			System.out.println("\t"+ctx.getChild(1).getText());
+			System.out.println("\t"+ctx.getChild(2).getText());
+			String op = ctx.getChild(1).getText();
+			Expr r = stack.pop();
+			Expr l = stack.pop();
+			if(op.equals("=="))
+				stack.push(Eq.apply(l,r));
+			else if(op.equals("!="))
+				stack.push(Neq.apply(l,r));
+			else
+				throw new RuntimeException();
+			}
 	}
 	public void exitAndExpression(CParser.AndExpressionContext ctx) {
 		if(ctx.getChildCount() == 3) {
@@ -141,10 +234,19 @@ public class MyListener extends CBaseListener {
 	}
 	public void exitAssignmentExpression(CParser.AssignmentExpressionContext ctx) {
 		if(ctx.getChildCount() == 3) {
-		System.out.println("AssignmentExpression="+ctx.getText());
-		System.out.println("\t"+ctx.getChild(0).getText());
-		System.out.println("\t"+ctx.getChild(1).getText());
-		System.out.println("\t"+ctx.getChild(2).getText());
+			System.out.println("AssignmentExpression="+ctx.getText());
+			System.out.println("\t"+ctx.getChild(0).getText());
+			System.out.println("\t"+ctx.getChild(1).getText());
+			System.out.println("\t"+ctx.getChild(2).getText());
+			Expr r = stack.pop();
+			Expr l = stack.pop();
+			String op = ctx.getChild(1).getText();
+			if(op.equals("=")) {
+				varMap.put(l.toString(), r);
+			} else {
+				throw new RuntimeException();
+			}
+
 		}
 	}
 //	public void exitAssignmentOperator(CParser.AssignmentOperatorContext ctx) {
@@ -237,13 +339,21 @@ public class MyListener extends CBaseListener {
 
 			// start parsing at the compilationUnit rule
 			parser.setBuildParseTree(true);
-			parser.addParseListener(new MyListener(parser));
+			MyListener l = new MyListener(parser);
+			parser.addParseListener(l);
 			ParserRuleContext t = parser.compilationUnit();
 			//t.inspect(parser);
 			//System.out.println(t.toStringTree(parser));
 			
 //			MyVisitor visitor = new MyVisitor(parser);
 //	        visitor.visit(t);
+			
+			while(!l.stack.empty()) {
+				Expr expr = l.stack.pop();
+				System.out.println(expr);
+				BytecodeFunc fun = JIT.compile(expr);
+				System.out.println(fun.apply(0.5));
+			}
 	        
 		}
 		catch (Exception e) {
@@ -282,7 +392,8 @@ public class MyListener extends CBaseListener {
 		//parseCode("void main() { ++a--; }");
 		//parseCode("void main() { int i=0,j=0; while(i<100) { j=i*i; i+=2; } }");
 		//parseCode("double fun(int x, int y) { int i=0,j=0; while(i<100) { j=i*i; i+=2; } }");
-		parseCode("double fun(int x, Symbol y) { return x+y; }");
+		//parseCode("double fun(int x, Symbol y) { return x+y; }");
+		parseCode("double fun(int x, Symbol y) { y = sin(x)+cos(x); return 2*y; }");
 	}
 
 }
